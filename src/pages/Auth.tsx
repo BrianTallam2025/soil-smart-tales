@@ -25,11 +25,22 @@ const Auth = () => {
     });
   }, [navigate]);
 
+  // Function to check if email should be admin
+  const isAdminEmail = (email: string) => {
+    const adminEmails = [
+      'admin@agritell.com',
+      'tallambrian633@gmail.com'
+    ];
+    return adminEmails.includes(email.toLowerCase());
+  };
+
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
-    const { error } = await supabase.auth.signUp({
+    const role = isAdminEmail(email) ? 'admin' : 'user';
+
+    const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -40,33 +51,73 @@ const Auth = () => {
       }
     });
 
-    setLoading(false);
-
-    if (error) {
+    if (authError) {
       toast({
         title: "Error signing up",
-        description: error.message,
+        description: authError.message,
         variant: "destructive",
       });
-    } else {
-      toast({
-        title: "Success!",
-        description: "Account created. Please complete your profile.",
-      });
-      navigate("/profile");
+      setLoading(false);
+      return;
     }
+
+    // Create profile
+    if (authData.user) {
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: authData.user.id,
+          full_name: fullName,
+          email: email,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+      if (profileError) {
+        toast({
+          title: "Error creating profile",
+          description: profileError.message,
+          variant: "destructive",
+        });
+      } else {
+        // Create user role in user_roles table
+        const { error: roleError } = await supabase
+          .from('user_roles')
+          .insert({
+            user_id: authData.user.id,
+            role: role,
+            created_at: new Date().toISOString(),
+          });
+
+        if (roleError) {
+          toast({
+            title: "Error setting user role",
+            description: roleError.message,
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: role === 'admin' ? "Admin account created!" : "Success!",
+            description: role === 'admin' 
+              ? "Admin account created. You have access to admin features." 
+              : "Account created. Please complete your profile.",
+          });
+          navigate("/profile");
+        }
+      }
+    }
+
+    setLoading(false);
   };
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
-
-    setLoading(false);
 
     if (error) {
       toast({
@@ -75,12 +126,23 @@ const Auth = () => {
         variant: "destructive",
       });
     } else {
+      // Check user role from user_roles table
+      const { data: userRole } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', data.user.id)
+        .single();
+
       toast({
-        title: "Welcome back!",
-        description: "Signed in successfully.",
+        title: userRole?.role === 'admin' ? "Welcome Admin!" : "Welcome back!",
+        description: userRole?.role === 'admin' 
+          ? "Signed in with admin privileges." 
+          : "Signed in successfully.",
       });
       navigate("/profile");
     }
+
+    setLoading(false);
   };
 
   return (

@@ -50,6 +50,28 @@ const Finance = () => {
     if (data) setChatHistory(data);
   };
 
+  const loadChatHistory = async (chatId: string) => {
+    const { data } = await supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('id', chatId)
+      .single();
+
+    if (data) {
+      // Reconstruct the conversation from the history item
+      const loadedConversation = [
+        { role: "user", content: data.message },
+        { role: "assistant", content: data.response }
+      ];
+      setConversation(loadedConversation);
+      setShowHistory(false); // Optional: hide history after selection
+      toast({
+        title: "Chat loaded",
+        description: "Previous conversation has been loaded",
+      });
+    }
+  };
+
   const handleSend = async () => {
     if (!message.trim() || !user) return;
 
@@ -118,7 +140,11 @@ const Finance = () => {
                 {chatHistory.length > 0 ? (
                   <div className="space-y-4">
                     {chatHistory.map((chat) => (
-                      <Card key={chat.id} className="bg-muted/30">
+                      <Card 
+                        key={chat.id} 
+                        className="bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors"
+                        onClick={() => loadChatHistory(chat.id)}
+                      >
                         <CardContent className="pt-4">
                           <p className="text-sm font-medium mb-2">You: {chat.message}</p>
                           <p className="text-sm text-muted-foreground">AI: {chat.response.substring(0, 150)}...</p>

@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { User, Sprout } from "lucide-react";
+import { User, Sprout, Calendar } from "lucide-react";
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -22,9 +22,11 @@ const Profile = () => {
     main_crops: [] as string[],
     farm_size: "",
     bio: "",
+    profile_completed: false,
   });
   const [cropsInput, setCropsInput] = useState("");
   const [blogs, setBlogs] = useState<any[]>([]);
+  const [showProfileForm, setShowProfileForm] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -54,8 +56,12 @@ const Profile = () => {
         main_crops: data.main_crops || [],
         farm_size: data.farm_size || "",
         bio: data.bio || "",
+        profile_completed: data.profile_completed || false,
       });
       setCropsInput(data.main_crops?.join(", ") || "");
+      setShowProfileForm(!data.profile_completed);
+    } else {
+      setShowProfileForm(true);
     }
     setLoading(false);
   };
@@ -76,12 +82,17 @@ const Profile = () => {
     const crops = cropsInput.split(',').map(c => c.trim()).filter(c => c);
     const { error } = await supabase
       .from('profiles')
-      .update({
-        ...profile,
+      .upsert({
+        id: user.id,
+        full_name: profile.full_name,
+        email: user.email,
+        region: profile.region,
         main_crops: crops,
+        farm_size: profile.farm_size,
+        bio: profile.bio,
         profile_completed: true,
-      })
-      .eq('id', user.id);
+        updated_at: new Date().toISOString(),
+      });
 
     setSaving(false);
 
@@ -96,7 +107,13 @@ const Profile = () => {
         title: "Success!",
         description: "Profile updated successfully",
       });
+      setShowProfileForm(false);
+      fetchProfile(user.id);
     }
+  };
+
+  const handleEditProfile = () => {
+    setShowProfileForm(true);
   };
 
   if (loading) {
@@ -124,72 +141,112 @@ const Profile = () => {
             <p className="text-muted-foreground">Welcome back to AgriTell</p>
           </div>
 
-          <Card className="mb-8">
-            <CardHeader>
-              <CardTitle>Your Profile</CardTitle>
-              <CardDescription>Update your farming information</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">Full Name</label>
-                <Input
-                  value={profile.full_name}
-                  onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
-                  placeholder="John Doe"
-                />
-              </div>
+          {showProfileForm ? (
+            <Card className="mb-8">
+              <CardHeader>
+                <CardTitle>Complete Your Profile</CardTitle>
+                <CardDescription>Tell us about your farm to get personalized advice</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">Full Name</label>
+                  <Input
+                    value={profile.full_name}
+                    onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
+                    placeholder="John Doe"
+                  />
+                </div>
 
-              <div>
-                <label className="text-sm font-medium">Email</label>
-                <Input
-                  value={profile.email}
-                  disabled
-                  placeholder="email@example.com"
-                />
-              </div>
+                <div>
+                  <label className="text-sm font-medium">Email</label>
+                  <Input
+                    value={user?.email || ""}
+                    disabled
+                    placeholder="email@example.com"
+                  />
+                </div>
 
-              <div>
-                <label className="text-sm font-medium">Region</label>
-                <Input
-                  value={profile.region}
-                  onChange={(e) => setProfile({ ...profile, region: e.target.value })}
-                  placeholder="e.g., Bomet, Kenya"
-                />
-              </div>
+                <div>
+                  <label className="text-sm font-medium">Region</label>
+                  <Input
+                    value={profile.region}
+                    onChange={(e) => setProfile({ ...profile, region: e.target.value })}
+                    placeholder="e.g., Bomet, Kenya"
+                  />
+                </div>
 
-              <div>
-                <label className="text-sm font-medium">Main Crops (comma-separated)</label>
-                <Input
-                  value={cropsInput}
-                  onChange={(e) => setCropsInput(e.target.value)}
-                  placeholder="e.g., Coffee, Tea"
-                />
-              </div>
+                <div>
+                  <label className="text-sm font-medium">Main Crops (comma-separated)</label>
+                  <Input
+                    value={cropsInput}
+                    onChange={(e) => setCropsInput(e.target.value)}
+                    placeholder="e.g., Coffee, Tea"
+                  />
+                </div>
 
-              <div>
-                <label className="text-sm font-medium">Farm Size (optional)</label>
-                <Input
-                  value={profile.farm_size}
-                  onChange={(e) => setProfile({ ...profile, farm_size: e.target.value })}
-                  placeholder="e.g., 2 acres"
-                />
-              </div>
+                <div>
+                  <label className="text-sm font-medium">Farm Size (optional)</label>
+                  <Input
+                    value={profile.farm_size}
+                    onChange={(e) => setProfile({ ...profile, farm_size: e.target.value })}
+                    placeholder="e.g., 2 acres"
+                  />
+                </div>
 
-              <div>
-                <label className="text-sm font-medium">Bio</label>
-                <Textarea
-                  value={profile.bio}
-                  onChange={(e) => setProfile({ ...profile, bio: e.target.value })}
-                  placeholder="Tell us about your farming journey..."
-                  rows={4}
-                />
-              </div>
+                <div>
+                  <label className="text-sm font-medium">Bio</label>
+                  <Textarea
+                    value={profile.bio}
+                    onChange={(e) => setProfile({ ...profile, bio: e.target.value })}
+                    placeholder="Tell us about your farming journey..."
+                    rows={4}
+                  />
+                </div>
 
-              <Button onClick={handleSave} disabled={saving} className="w-full">
-                {saving ? "Saving..." : "Save Profile"}
-              </Button>
-            </CardContent>
-          </Card>
+                <Button onClick={handleSave} disabled={saving} className="w-full">
+                  {saving ? "Saving..." : "Complete Profile"}
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="mb-8">
+              <CardHeader>
+                <CardTitle>Your Profile</CardTitle>
+                <CardDescription>Your farming information</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Full Name</label>
+                    <p className="text-sm">{profile.full_name || "Not set"}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Email</label>
+                    <p className="text-sm">{user?.email}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Region</label>
+                    <p className="text-sm">{profile.region || "Not set"}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Main Crops</label>
+                    <p className="text-sm">{profile.main_crops?.join(", ") || "Not set"}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Farm Size</label>
+                    <p className="text-sm">{profile.farm_size || "Not set"}</p>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Bio</label>
+                  <p className="text-sm">{profile.bio || "Not set"}</p>
+                </div>
+                <Button onClick={handleEditProfile} variant="outline">
+                  Edit Profile
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>
@@ -212,6 +269,13 @@ const Profile = () => {
                           {blog.crop} • {blog.region} • {blog.season}
                         </CardDescription>
                       </CardHeader>
+                      <CardContent>
+                        <p className="text-sm text-muted-foreground line-clamp-3">{blog.content}</p>
+                        <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+                          <Calendar className="h-3 w-3" />
+                          {new Date(blog.created_at).toLocaleDateString()}
+                        </div>
+                      </CardContent>
                     </Card>
                   ))}
                 </div>

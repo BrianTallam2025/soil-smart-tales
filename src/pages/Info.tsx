@@ -15,6 +15,7 @@ const Info = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [blogs, setBlogs] = useState<any[]>([]);
   const [filteredBlogs, setFilteredBlogs] = useState<any[]>([]);
   const [selectedBlog, setSelectedBlog] = useState<any>(null);
@@ -28,6 +29,8 @@ const Info = () => {
     crop: "",
     season: "",
   });
+  const [creating, setCreating] = useState(false);
+  const [loadingBlogs, setLoadingBlogs] = useState(true);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -35,6 +38,7 @@ const Info = () => {
         navigate("/auth");
       } else {
         setUser(session.user);
+        fetchProfile(session.user.id);
         fetchBlogs();
       }
     });
@@ -44,15 +48,70 @@ const Info = () => {
     applyFilters();
   }, [blogs, filterCrop, filterSeason]);
 
-  const fetchBlogs = async () => {
+  const fetchProfile = async (userId: string) => {
     const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+    if (data) {
+      setProfile(data);
+      setNewBlog(prev => ({
+        ...prev,
+        region: data.region || "",
+        crop: data.main_crops?.[0] || ""
+      }));
+    }
+  };
+
+  const fetchBlogs = async () => {
+    setLoadingBlogs(true);
+    
+    // First, get all blogs
+    const { data: blogsData, error: blogsError } = await supabase
       .from('blogs')
-      .select(`
-        *,
-        profiles (full_name)
-      `)
+      .select('*')
       .order('created_at', { ascending: false });
-    if (data) setBlogs(data);
+    
+    if (blogsError) {
+      console.error('Error fetching blogs:', blogsError);
+      toast({
+        title: "Error loading blogs",
+        description: blogsError.message,
+        variant: "destructive",
+      });
+      setLoadingBlogs(false);
+      return;
+    }
+
+    // Then, get all author profiles separately
+    if (blogsData && blogsData.length > 0) {
+      const authorIds = [...new Set(blogsData.map(blog => blog.author_id))];
+      
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', authorIds);
+
+      if (profilesError) {
+        console.error('Error fetching profiles:', profilesError);
+      }
+
+      // Combine blogs with author names
+      const blogsWithAuthors = blogsData.map(blog => {
+        const authorProfile = profilesData?.find(profile => profile.id === blog.author_id);
+        return {
+          ...blog,
+          author_name: authorProfile?.full_name || 'Unknown'
+        };
+      });
+
+      setBlogs(blogsWithAuthors);
+    } else {
+      setBlogs([]);
+    }
+    
+    setLoadingBlogs(false);
   };
 
   const applyFilters = () => {
@@ -67,7 +126,16 @@ const Info = () => {
   };
 
   const handleCreateBlog = async () => {
-    if (!user || !newBlog.title || !newBlog.content || !newBlog.region || !newBlog.crop || !newBlog.season) {
+    if (!user) {
+      toast({
+        title: "Error",
+        description: "You must be logged in to create a blog",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!newBlog.title || !newBlog.content || !newBlog.region || !newBlog.crop || !newBlog.season) {
       toast({
         title: "Missing fields",
         description: "Please fill in all required fields",
@@ -76,26 +144,57 @@ const Info = () => {
       return;
     }
 
-    const { error } = await supabase
+    setCreating(true);
+
+    const { data, error } = await supabase
       .from('blogs')
       .insert({
-        ...newBlog,
+        title: newBlog.title,
+        content: newBlog.content,
+        region: newBlog.region,
+        crop: newBlog.crop,
+        season: newBlog.season,
         author_id: user.id,
-      });
+      })
+      .select()
+      .single();
+
+    setCreating(false);
 
     if (error) {
+      console.error('Error creating blog:', error);
       toast({
         title: "Error creating blog",
         description: error.message,
         variant: "destructive",
       });
     } else {
-      toast({ title: "Success!", description: "Blog published successfully" });
+      toast({ 
+        title: "Success!", 
+        description: "Blog published successfully" 
+      });
       setShowNewBlogDialog(false);
-      setNewBlog({ title: "", content: "", region: "", crop: "", season: "" });
-      fetchBlogs();
+      setNewBlog({ 
+        title: "", 
+        content: "", 
+        region: profile?.region || "", 
+        crop: profile?.main_crops?.[0] || "", 
+        season: "" 
+      });
+      fetchBlogs(); // Refresh the blogs list
     }
   };
+
+  if (loadingBlogs) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Navbar />
+        <div className="container mx-auto px-4 py-12 text-center">
+          <p>Loading blogs...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -106,6 +205,9 @@ const Info = () => {
           <div>
             <h1 className="text-4xl font-bold text-foreground">Info Hub</h1>
             <p className="text-muted-foreground">Share and discover farming insights</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Total blogs: {blogs.length} • Showing: {filteredBlogs.length}
+            </p>
           </div>
           <Dialog open={showNewBlogDialog} onOpenChange={setShowNewBlogDialog}>
             <DialogTrigger asChild>
@@ -121,7 +223,7 @@ const Info = () => {
               </DialogHeader>
               <div className="space-y-4">
                 <div>
-                  <label className="text-sm font-medium">Title</label>
+                  <label className="text-sm font-medium">Title *</label>
                   <Input
                     value={newBlog.title}
                     onChange={(e) => setNewBlog({ ...newBlog, title: e.target.value })}
@@ -130,7 +232,7 @@ const Info = () => {
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="text-sm font-medium">Region</label>
+                    <label className="text-sm font-medium">Region *</label>
                     <Input
                       value={newBlog.region}
                       onChange={(e) => setNewBlog({ ...newBlog, region: e.target.value })}
@@ -138,7 +240,7 @@ const Info = () => {
                     />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Crop</label>
+                    <label className="text-sm font-medium">Crop *</label>
                     <Input
                       value={newBlog.crop}
                       onChange={(e) => setNewBlog({ ...newBlog, crop: e.target.value })}
@@ -146,7 +248,7 @@ const Info = () => {
                     />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Season</label>
+                    <label className="text-sm font-medium">Season *</label>
                     <Select value={newBlog.season} onValueChange={(v) => setNewBlog({ ...newBlog, season: v })}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select..." />
@@ -163,7 +265,7 @@ const Info = () => {
                   </div>
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Content</label>
+                  <label className="text-sm font-medium">Content *</label>
                   <Textarea
                     value={newBlog.content}
                     onChange={(e) => setNewBlog({ ...newBlog, content: e.target.value })}
@@ -171,7 +273,9 @@ const Info = () => {
                     rows={10}
                   />
                 </div>
-                <Button onClick={handleCreateBlog} className="w-full">Publish Blog</Button>
+                <Button onClick={handleCreateBlog} disabled={creating} className="w-full">
+                  {creating ? "Publishing..." : "Publish Blog"}
+                </Button>
               </div>
             </DialogContent>
           </Dialog>
@@ -196,6 +300,8 @@ const Info = () => {
                     <SelectItem value="all">All Crops</SelectItem>
                     <SelectItem value="coffee">Coffee</SelectItem>
                     <SelectItem value="tea">Tea</SelectItem>
+                    <SelectItem value="maize">Maize</SelectItem>
+                    <SelectItem value="wheat">Wheat</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -235,18 +341,27 @@ const Info = () => {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground line-clamp-3">{blog.content}</p>
-                <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-                  <Calendar className="h-3 w-3" />
-                  {new Date(blog.created_at).toLocaleDateString()}
+                <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>By {blog.author_name || 'Unknown'}</span>
+                  <div className="flex items-center gap-1">
+                    <Calendar className="h-3 w-3" />
+                    {new Date(blog.created_at).toLocaleDateString()}
+                  </div>
                 </div>
               </CardContent>
             </Card>
           ))}
         </div>
 
-        {filteredBlogs.length === 0 && (
+        {filteredBlogs.length === 0 && blogs.length > 0 && (
           <div className="text-center py-12">
-            <p className="text-muted-foreground">No blogs found. Try adjusting your filters or create a new blog!</p>
+            <p className="text-muted-foreground">No blogs match your current filters. Try adjusting them!</p>
+          </div>
+        )}
+
+        {blogs.length === 0 && (
+          <div className="text-center py-12">
+            <p className="text-muted-foreground">No blogs found yet. Be the first to create one!</p>
           </div>
         )}
 
@@ -263,7 +378,7 @@ const Info = () => {
                       <span className="bg-accent/10 text-accent px-2 py-1 rounded text-xs">{selectedBlog.season}</span>
                     </div>
                     <div className="mt-2 text-xs text-muted-foreground">
-                      Published on {new Date(selectedBlog.created_at).toLocaleDateString()}
+                      By {selectedBlog.author_name || 'Unknown'} • Published on {new Date(selectedBlog.created_at).toLocaleDateString()}
                     </div>
                   </DialogDescription>
                 </DialogHeader>
